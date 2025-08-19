@@ -4,14 +4,11 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 import sqlite3, os, time, bcrypt, jwt
 from datetime import datetime, timedelta
-from fastapi import UploadFile
-from fastapi.responses import StreamingResponse
-from io import BytesIO
 import logging
 import os
 import uvicorn
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
@@ -19,9 +16,9 @@ if _name_ == "_main_":
 
 # Configura logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(_name_)
+logger = logging.getLogger(__name__)
 
-DB_PATH = os.path.join(os.path.dirname(_file_), "app.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "app.db")
 JWT_SECRET = os.environ.get("JWT_SECRET", "dev_secret_change_me")
 JWT_ALG = "HS256"
 
@@ -238,73 +235,3 @@ def save_document(payload: DocumentPayload, user = Depends(get_current_user)):
     finally:
         if conn:
             conn.close()
-@app.post("/documents/upload")
-async def upload_document(file: UploadFile, user = Depends(get_current_user)):
-    if not file.filename.endswith(".txt"):
-        raise HTTPException(status_code=400, detail="Solo se permiten archivos .txt")
-
-    try:
-        content = await file.read()
-        text = content.decode("utf-8")
-        now = int(time.time())
-
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO documents (user_id, content, updated_at) VALUES (?, ?, ?)",
-            (user["id"], text, now)
-        )
-        conn.commit()
-        doc_id = cur.lastrowid
-        return {"ok": True, "doc_id": doc_id, "filename": file.filename}
-    except Exception as e:
-        logger.error(f"Error subiendo archivo: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error al subir el documento")
-    finally:
-        conn.close()
-
-
-@app.get("/documents")
-def list_documents(user = Depends(get_current_user)):
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT id, content, updated_at FROM documents WHERE user_id = ? ORDER BY updated_at DESC",
-            (user["id"],)
-        )
-        rows = cur.fetchall()
-        return [
-            {"id": r["id"], "preview": r["content"][:30], "updated_at": r["updated_at"]}
-            for r in rows
-        ]
-    except Exception as e:
-        logger.error(f"Error listando documentos: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error al listar documentos")
-    finally:
-        conn.close()
-
-
-@app.get("/documents/{doc_id}/download")
-def download_document(doc_id: int, user = Depends(get_current_user)):
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT content FROM documents WHERE id = ? AND user_id = ?",
-            (doc_id, user["id"])
-        )
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Documento no encontrado")
-
-        buffer = BytesIO(row["content"].encode("utf-8"))
-        headers = {
-            "Content-Disposition": f"attachment; filename=document_{doc_id}.txt"
-        }
-        return StreamingResponse(buffer, media_type="text/plain", headers=headers)
-    except Exception as e:
-        logger.error(f"Error descargando documento: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error al descargar el documento")
-    finally:
-        conn.close()
